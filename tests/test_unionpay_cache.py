@@ -1,8 +1,10 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import requests
 
@@ -163,6 +165,95 @@ class RateCacheTests(unittest.TestCase):
                 (data_dir / "latest.json").read_text(encoding="utf-8")
             )
             self.assertEqual([LATEST_RATE, PREVIOUS_RATE], latest_payload["rates"])
+
+    def test_refreshed_rate_takes_priority_over_stale_same_date_data(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            history_dir = data_dir / "history"
+            history_dir.mkdir()
+            corrected_rate = {**LATEST_RATE, "rate": 0.049}
+            (history_dir / "2026-08-30.json").write_text(
+                json.dumps(PREVIOUS_RATE), encoding="utf-8"
+            )
+            (history_dir / "2026-08-31.json").write_text(
+                json.dumps(LATEST_RATE), encoding="utf-8"
+            )
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": "2026-08-30T01:00:00+09:00",
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            latest, previous = get_latest_two_rates(
+                data_dir=data_dir,
+                now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                fetcher=lambda day: (
+                    corrected_rate if day.isoformat() == "2026-08-31" else None
+                ),
+            )
+
+            self.assertEqual(corrected_rate, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+
+            latest_payload = json.loads(
+                (data_dir / "latest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(corrected_rate, latest_payload["rates"][0])
+
+    def test_cache_write_failure_does_not_hide_fetched_rates(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory) / "read-only-data"
+            data_dir.mkdir()
+            os.chmod(data_dir, 0o500)
+            rates_by_day = {
+                "2026-08-31": LATEST_RATE,
+                "2026-08-30": PREVIOUS_RATE,
+            }
+
+            try:
+                with self.assertLogs("unionpay", level="WARNING") as captured_logs:
+                    latest, previous = get_latest_two_rates(
+                        data_dir=data_dir,
+                        now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                        fetcher=lambda day: rates_by_day.get(day.isoformat()),
+                    )
+            finally:
+                os.chmod(data_dir, 0o700)
+
+            self.assertEqual(LATEST_RATE, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+            self.assertIn("Could not persist rate cache", captured_logs.output[0])
+
+    def test_history_enumeration_error_still_allows_stale_cache_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": "2026-08-30T01:00:00+09:00",
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def failing_history_paths():
+                raise OSError("history directory unavailable")
+                yield
+
+            with patch("unionpay.Path.glob", return_value=failing_history_paths()):
+                latest, previous = get_latest_two_rates(
+                    data_dir=data_dir,
+                    now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                    fetcher=lambda _day: None,
+                )
+
+            self.assertEqual(LATEST_RATE, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
 
 
 if __name__ == "__main__":

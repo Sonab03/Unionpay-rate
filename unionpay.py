@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import tempfile
 from datetime import datetime, timedelta
@@ -11,6 +12,7 @@ JST = ZoneInfo("Asia/Tokyo")
 BASE_URL = "https://www.unionpayintl.com/upload/jfimg/{}.json"
 CACHE_TTL = timedelta(hours=6)
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
+logger = logging.getLogger(__name__)
 
 
 def fetch_rate_for_day(day):
@@ -124,7 +126,7 @@ def _read_history(data_dir):
     rates_by_date = {}
 
     try:
-        history_paths = history_dir.glob("*.json")
+        history_paths = list(history_dir.glob("*.json"))
     except OSError:
         return []
 
@@ -142,7 +144,7 @@ def _merge_rates(*rate_groups):
     for rate_group in rate_groups:
         for rate in rate_group:
             if _valid_rate(rate):
-                rates_by_date[_rate_date(rate)] = dict(rate)
+                rates_by_date.setdefault(_rate_date(rate), dict(rate))
 
     return [rates_by_date[date_key] for date_key in sorted(rates_by_date, reverse=True)]
 
@@ -204,7 +206,10 @@ def get_latest_two_rates(*, data_dir=None, now=None, fetcher=None):
 
     if found:
         refreshed_rates = _merge_rates(found, cached_rates, _read_history(data_dir))[:2]
-        _persist_rates(data_dir, refreshed_rates, now)
+        try:
+            _persist_rates(data_dir, refreshed_rates, now)
+        except OSError as error:
+            logger.warning("Could not persist rate cache in %s: %s", data_dir, error)
         return _as_pair(refreshed_rates)
 
     fallback_rates = _merge_rates(cached_rates, _read_history(data_dir))
