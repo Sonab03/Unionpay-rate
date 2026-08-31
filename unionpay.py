@@ -211,11 +211,14 @@ def get_latest_rate_snapshot(*, data_dir=None, now=None, fetcher=None):
 
     if found:
         refreshed_rates = _merge_rates(found, cached_rates, _read_history(data_dir))[:2]
+        updated_at = fetched_at
         try:
             _persist_rates(data_dir, refreshed_rates, now)
         except OSError as error:
             logger.warning("Could not persist rate cache in %s: %s", data_dir, error)
-        return _as_snapshot(refreshed_rates, now)
+        else:
+            updated_at = now
+        return _as_snapshot(refreshed_rates, updated_at)
 
     fallback_rates = _merge_rates(cached_rates, _read_history(data_dir))
     if fallback_rates:

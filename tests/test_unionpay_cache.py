@@ -241,7 +241,7 @@ class RateCacheTests(unittest.TestCase):
 
             try:
                 with self.assertLogs("unionpay", level="WARNING") as captured_logs:
-                    latest, previous = get_latest_two_rates(
+                    latest, previous, updated_at = unionpay.get_latest_rate_snapshot(
                         data_dir=data_dir,
                         now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
                         fetcher=lambda day: rates_by_day.get(day.isoformat()),
@@ -251,7 +251,43 @@ class RateCacheTests(unittest.TestCase):
 
             self.assertEqual(LATEST_RATE, latest)
             self.assertEqual(PREVIOUS_RATE, previous)
+            self.assertIsNone(updated_at)
             self.assertIn("Could not persist rate cache", captured_logs.output[0])
+
+    def test_failed_refresh_keeps_previous_cache_time(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory) / "read-only-data"
+            data_dir.mkdir()
+            previous_refresh = datetime(2026, 8, 30, 1, 0, tzinfo=JST)
+            corrected_rate = {**LATEST_RATE, "rate": 0.049}
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": previous_refresh.isoformat(),
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.chmod(data_dir, 0o500)
+            rates_by_day = {
+                "2026-08-31": corrected_rate,
+                "2026-08-30": PREVIOUS_RATE,
+            }
+
+            try:
+                with self.assertLogs("unionpay", level="WARNING"):
+                    latest, previous, updated_at = unionpay.get_latest_rate_snapshot(
+                        data_dir=data_dir,
+                        now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                        fetcher=lambda day: rates_by_day.get(day.isoformat()),
+                    )
+            finally:
+                os.chmod(data_dir, 0o700)
+
+            self.assertEqual(corrected_rate, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+            self.assertEqual(previous_refresh, updated_at)
 
     def test_history_enumeration_error_still_allows_stale_cache_fallback(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
