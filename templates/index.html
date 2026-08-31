@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>银联日元汇率</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 24px 16px;
+            font-family:
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+            background: #f5f5f7;
+            color: #111;
+        }
+
+        .container {
+            max-width: 520px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 22px;
+            padding: 24px;
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            margin: 0 0 20px;
+            font-size: 24px;
+        }
+
+        .big {
+            font-size: 30px;
+            font-weight: 700;
+            line-height: 1.25;
+        }
+
+        .secondary {
+            margin-top: 8px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .comparison {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+            color: #555;
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 18px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: 0;
+            border-radius: 12px;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        button.active {
+            background: #111;
+            color: white;
+        }
+
+        button:not(.active) {
+            background: #eee;
+            color: #333;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid #ccc;
+            border-radius: 12px;
+            font-size: 20px;
+            outline: none;
+        }
+
+        .result {
+            margin-top: 20px;
+            font-size: 27px;
+            font-weight: 700;
+        }
+
+        .hint {
+            margin-top: 8px;
+            color: #777;
+            font-size: 13px;
+        }
+
+        .source {
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="card">
+        <h1>银联日元汇率</h1>
+
+        <div class="big">
+            10,000 JPY = {{ "%.2f"|format(latest_10000) }} CNY
+        </div>
+
+        <div class="secondary">
+            1 JPY = {{ "%.6f"|format(rate) }} CNY
+        </div>
+
+        <div class="secondary">
+            数据日期：{{ latest.curDate }}
+        </div>
+
+        {% if comparison %}
+        <div class="comparison">
+            <div>
+                上一数据日：{{ comparison.date }}
+            </div>
+
+            <div>
+                10,000 JPY：
+                {% if comparison.change >= 0 %}+{% endif %}
+                {{ "%.2f"|format(comparison.change) }} CNY
+
+                (
+                {% if comparison.change_pct >= 0 %}+{% endif %}
+                {{ "%.2f"|format(comparison.change_pct) }}%
+                )
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+
+    <div class="card">
+
+        <div class="tabs">
+            <button id="jpyButton"
+                    class="active"
+                    type="button">
+                JPY → CNY
+            </button>
+
+            <button id="cnyButton"
+                    type="button">
+                CNY → JPY
+            </button>
+        </div>
+
+        <label id="inputLabel">
+            日元金额
+        </label>
+
+        <input
+            id="amount"
+            type="number"
+            inputmode="decimal"
+            placeholder="例如 10000"
+        >
+
+        <div id="result"
+             class="result"></div>
+
+        <div id="hint"
+             class="hint"></div>
+
+    </div>
+
+    <div class="source">
+        Source: UnionPay International
+    </div>
+
+</div>
+
+
+<script>
+    const rate = {{ rate }};
+    let direction = "JPY_TO_CNY";
+
+    const amount = document.getElementById("amount");
+    const result = document.getElementById("result");
+    const hint = document.getElementById("hint");
+    const inputLabel = document.getElementById("inputLabel");
+    const jpyButton = document.getElementById("jpyButton");
+    const cnyButton = document.getElementById("cnyButton");
+
+    function render() {
+        const value = Number(amount.value);
+
+        if (!amount.value || value < 0) {
+            result.textContent = "";
+            hint.textContent = "";
+            return;
+        }
+
+        if (direction === "JPY_TO_CNY") {
+            const cny = value * rate;
+
+            result.textContent =
+                cny.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                }) + " CNY";
+
+            hint.textContent =
+                value.toLocaleString() + " JPY";
+
+        } else {
+            const jpy = value / rate;
+
+            result.textContent =
+                jpy.toLocaleString(undefined, {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2
+                }) + " JPY";
+
+            hint.textContent =
+                value.toLocaleString() + " CNY";
+        }
+    }
+
+    jpyButton.addEventListener("click", () => {
+        direction = "JPY_TO_CNY";
+
+        jpyButton.classList.add("active");
+        cnyButton.classList.remove("active");
+
+        inputLabel.textContent = "日元金额";
+        amount.placeholder = "例如 10000";
+
+        render();
+    });
+
+    cnyButton.addEventListener("click", () => {
+        direction = "CNY_TO_JPY";
+
+        cnyButton.classList.add("active");
+        jpyButton.classList.remove("active");
+
+        inputLabel.textContent = "人民币金额";
+        amount.placeholder = "例如 500";
+
+        render();
+    });
+
+    amount.addEventListener("input", render);
+</script>
+
+</body>
+</html>
