@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import requests
 
+import unionpay
 from unionpay import JST, get_latest_two_rates
 
 
@@ -27,6 +28,30 @@ PREVIOUS_RATE = {
 
 
 class RateCacheTests(unittest.TestCase):
+    def test_snapshot_exposes_cache_refresh_time(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            refreshed_at = datetime(2026, 9, 1, 0, 15, tzinfo=JST)
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": refreshed_at.isoformat(),
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            latest, previous, updated_at = unionpay.get_latest_rate_snapshot(
+                data_dir=data_dir,
+                now=datetime(2026, 9, 1, 1, 0, tzinfo=JST),
+                fetcher=lambda _day: self.fail("fresh cache must not be refreshed"),
+            )
+
+            self.assertEqual(LATEST_RATE, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+            self.assertEqual(refreshed_at, updated_at)
+
     def test_fresh_cache_avoids_upstream_requests(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             data_dir = Path(temporary_directory)

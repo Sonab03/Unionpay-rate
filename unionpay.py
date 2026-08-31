@@ -170,7 +170,12 @@ def _as_pair(rates):
     return latest, previous
 
 
-def get_latest_two_rates(*, data_dir=None, now=None, fetcher=None):
+def _as_snapshot(rates, updated_at):
+    latest, previous = _as_pair(rates)
+    return latest, previous, updated_at
+
+
+def get_latest_rate_snapshot(*, data_dir=None, now=None, fetcher=None):
     data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
     now = now or datetime.now(JST)
     if now.tzinfo is None:
@@ -182,7 +187,7 @@ def get_latest_two_rates(*, data_dir=None, now=None, fetcher=None):
     if fetched_at is not None and cached_rates:
         cache_age = now - fetched_at.astimezone(now.tzinfo)
         if timedelta(0) <= cache_age <= CACHE_TTL:
-            return _as_pair(cached_rates)
+            return _as_snapshot(cached_rates, fetched_at)
 
     today = now.astimezone(JST).date()
     found = []
@@ -210,10 +215,19 @@ def get_latest_two_rates(*, data_dir=None, now=None, fetcher=None):
             _persist_rates(data_dir, refreshed_rates, now)
         except OSError as error:
             logger.warning("Could not persist rate cache in %s: %s", data_dir, error)
-        return _as_pair(refreshed_rates)
+        return _as_snapshot(refreshed_rates, now)
 
     fallback_rates = _merge_rates(cached_rates, _read_history(data_dir))
     if fallback_rates:
-        return _as_pair(fallback_rates)
+        return _as_snapshot(fallback_rates, fetched_at)
 
     raise RuntimeError("No UnionPay rate found")
+
+
+def get_latest_two_rates(*, data_dir=None, now=None, fetcher=None):
+    latest, previous, _updated_at = get_latest_rate_snapshot(
+        data_dir=data_dir,
+        now=now,
+        fetcher=fetcher,
+    )
+    return latest, previous
