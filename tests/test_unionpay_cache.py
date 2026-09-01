@@ -1,8 +1,11 @@
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,6 +31,117 @@ PREVIOUS_RATE = {
 
 
 class RateCacheTests(unittest.TestCase):
+    def test_fetch_rate_uses_json_headers_accepted_by_unionpay(self):
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "curDate": "2026-09-01",
+                    "exchangeRateJson": [
+                        {
+                            "transCur": "JPY",
+                            "baseCur": "CNY",
+                            "rateData": "0.042223",
+                        }
+                    ],
+                }
+
+        def accepted_request(_url, *, timeout, headers=None):
+            self.assertEqual(15, timeout)
+            self.assertIn("UnionPayRateMonitor", headers["User-Agent"])
+            self.assertIn("application/json", headers["Accept"])
+            return FakeResponse()
+
+        with patch("unionpay.requests.get", side_effect=accepted_request):
+            rate = unionpay.fetch_rate_for_day(date(2026, 9, 1))
+
+        self.assertEqual(0.042223, rate["rate"])
+
+    def test_http_403_stops_refresh_after_first_attempt(self):
+        class ForbiddenResponse:
+            status_code = 403
+
+            def raise_for_status(self):
+                raise requests.HTTPError("403 Forbidden")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            history_dir = data_dir / "history"
+            history_dir.mkdir()
+            (history_dir / "2026-08-30.json").write_text(
+                json.dumps(PREVIOUS_RATE), encoding="utf-8"
+            )
+            (history_dir / "2026-08-31.json").write_text(
+                json.dumps(LATEST_RATE), encoding="utf-8"
+            )
+
+            with patch("unionpay.requests.get", return_value=ForbiddenResponse()) as get:
+                latest, previous = get_latest_two_rates(
+                    data_dir=data_dir,
+                    now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                )
+
+            self.assertEqual(1, get.call_count)
+            self.assertEqual(LATEST_RATE, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+
+    def test_invalid_json_stops_refresh_after_first_attempt(self):
+        class InvalidJsonResponse:
+            status_code = 200
+
+            def json(self):
+                raise ValueError("not JSON")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            history_dir = data_dir / "history"
+            history_dir.mkdir()
+            (history_dir / "2026-08-30.json").write_text(
+                json.dumps(PREVIOUS_RATE), encoding="utf-8"
+            )
+            (history_dir / "2026-08-31.json").write_text(
+                json.dumps(LATEST_RATE), encoding="utf-8"
+            )
+
+            with patch("unionpay.requests.get", return_value=InvalidJsonResponse()) as get:
+                latest, previous = get_latest_two_rates(
+                    data_dir=data_dir,
+                    now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                )
+
+            self.assertEqual(1, get.call_count)
+            self.assertEqual(LATEST_RATE, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+
+    def test_malformed_json_shape_falls_back_after_first_attempt(self):
+        class MalformedResponse:
+            status_code = 200
+
+            def json(self):
+                return []
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            history_dir = data_dir / "history"
+            history_dir.mkdir()
+            (history_dir / "2026-08-30.json").write_text(
+                json.dumps(PREVIOUS_RATE), encoding="utf-8"
+            )
+            (history_dir / "2026-08-31.json").write_text(
+                json.dumps(LATEST_RATE), encoding="utf-8"
+            )
+
+            with patch("unionpay.requests.get", return_value=MalformedResponse()) as get:
+                latest, previous = get_latest_two_rates(
+                    data_dir=data_dir,
+                    now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                )
+
+            self.assertEqual(1, get.call_count)
+            self.assertEqual(LATEST_RATE, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+
     def test_snapshot_exposes_cache_refresh_time(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             data_dir = Path(temporary_directory)
@@ -76,6 +190,104 @@ class RateCacheTests(unittest.TestCase):
 
             self.assertEqual(LATEST_RATE, latest)
             self.assertEqual(PREVIOUS_RATE, previous)
+
+    def test_forced_refresh_bypasses_fresh_cache(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": "2026-08-31T11:00:00+09:00",
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            corrected_rate = {**LATEST_RATE, "rate": 0.049}
+            rates_by_day = {
+                "2026-08-31": corrected_rate,
+                "2026-08-30": PREVIOUS_RATE,
+            }
+
+            latest, previous, updated_at = unionpay.get_latest_rate_snapshot(
+                data_dir=data_dir,
+                now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                fetcher=lambda day: rates_by_day.get(day.isoformat()),
+                force_refresh=True,
+            )
+
+            self.assertEqual(corrected_rate, latest)
+            self.assertEqual(PREVIOUS_RATE, previous)
+            self.assertEqual(datetime(2026, 8, 31, 12, 0, tzinfo=JST), updated_at)
+
+    def test_failed_manual_refresh_is_throttled_for_one_minute(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": "2026-08-31T01:00:00+09:00",
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            attempts = 0
+
+            def unavailable_fetch(_day):
+                nonlocal attempts
+                attempts += 1
+                raise requests.RequestException("UnionPay unavailable")
+
+            first = unionpay.refresh_latest_rate_snapshot(
+                data_dir=data_dir,
+                now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                fetcher=unavailable_fetch,
+            )
+            second = unionpay.refresh_latest_rate_snapshot(
+                data_dir=data_dir,
+                now=datetime(2026, 8, 31, 12, 0, 30, tzinfo=JST),
+                fetcher=unavailable_fetch,
+            )
+
+            self.assertEqual(1, attempts)
+            self.assertEqual("failed", first[3])
+            self.assertEqual("throttled", second[3])
+
+    def test_concurrent_manual_refreshes_make_one_upstream_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            (data_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": "2026-08-31T01:00:00+09:00",
+                        "rates": [LATEST_RATE, PREVIOUS_RATE],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            attempts = 0
+            attempts_lock = threading.Lock()
+
+            def unavailable_fetch(_day):
+                nonlocal attempts
+                with attempts_lock:
+                    attempts += 1
+                time.sleep(0.05)
+                raise requests.RequestException("UnionPay unavailable")
+
+            def refresh():
+                return unionpay.refresh_latest_rate_snapshot(
+                    data_dir=data_dir,
+                    now=datetime(2026, 8, 31, 12, 0, tzinfo=JST),
+                    fetcher=unavailable_fetch,
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _index: refresh(), range(2)))
+
+            self.assertEqual(1, attempts)
+            self.assertEqual(["failed", "throttled"], sorted(result[3] for result in results))
 
     def test_refresh_persists_latest_cache_and_dated_history(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

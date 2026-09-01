@@ -1,11 +1,18 @@
 from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from unionpay import JST, get_latest_rate_snapshot
+from unionpay import JST, get_latest_rate_snapshot, refresh_latest_rate_snapshot
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
+REFRESH_MESSAGES = {
+    "updated": "汇率已更新",
+    "current": "刚刚已经刷新，无需重复操作",
+    "throttled": "刚刚尝试过刷新，请稍后再试",
+    "failed": "刷新失败，已继续使用缓存",
+}
 
 
 @app.get("/")
@@ -43,5 +50,19 @@ def home(request: Request):
             "comparison": comparison,
             "updated_at_text": updated_at_text,
             "app_version": APP_VERSION,
+            "refresh_status": request.query_params.get("refresh"),
+            "refresh_message": REFRESH_MESSAGES.get(
+                request.query_params.get("refresh")
+            ),
         },
     )
+
+
+@app.post("/refresh")
+def refresh_rates():
+    try:
+        _latest, _previous, _updated_at, status = refresh_latest_rate_snapshot()
+    except RuntimeError:
+        status = "failed"
+
+    return RedirectResponse(url=f"/?refresh={status}", status_code=303)

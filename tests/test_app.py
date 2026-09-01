@@ -23,16 +23,16 @@ PREVIOUS_RATE = {
 }
 
 
-def make_request():
+def make_request(path="/", method="GET", query_string=b""):
     return Request(
         {
             "type": "http",
             "http_version": "1.1",
-            "method": "GET",
+            "method": method,
             "scheme": "http",
-            "path": "/",
-            "raw_path": b"/",
-            "query_string": b"",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": query_string,
             "root_path": "",
             "headers": [],
             "client": ("testclient", 50000),
@@ -60,9 +60,37 @@ class HomePageTests(unittest.TestCase):
 
         html = response.body.decode("utf-8")
         self.assertIn(
-            "更新时间：2026-09-01 00:15 JST · v1.1.0",
+            "更新时间：2026-09-01 00:15 JST · v1.1.1",
             html,
         )
+
+    def test_home_shows_manual_refresh_button_and_success_message(self):
+        updated_at = datetime(2026, 9, 1, 0, 15, tzinfo=JST)
+
+        with patch.object(
+            app,
+            "get_latest_rate_snapshot",
+            return_value=(LATEST_RATE, PREVIOUS_RATE, updated_at),
+        ):
+            response = app.home(make_request(query_string=b"refresh=updated"))
+
+        html = response.body.decode("utf-8")
+        self.assertIn('action="/refresh"', html)
+        self.assertIn("手动刷新", html)
+        self.assertIn("汇率已更新", html)
+
+    def test_refresh_endpoint_forces_refresh_and_redirects_with_status(self):
+        with patch.object(
+            app,
+            "refresh_latest_rate_snapshot",
+            return_value=(LATEST_RATE, PREVIOUS_RATE, None, "failed"),
+            create=True,
+        ) as refresh:
+            response = app.refresh_rates()
+
+        refresh.assert_called_once_with()
+        self.assertEqual(303, response.status_code)
+        self.assertEqual("/?refresh=failed", response.headers["location"])
 
 
 if __name__ == "__main__":

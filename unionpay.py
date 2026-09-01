@@ -1,7 +1,9 @@
+import fcntl
 import json
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -11,7 +13,17 @@ import requests
 JST = ZoneInfo("Asia/Tokyo")
 BASE_URL = "https://www.unionpayintl.com/upload/jfimg/{}.json"
 CACHE_TTL = timedelta(hours=6)
+MANUAL_REFRESH_COOLDOWN = timedelta(minutes=1)
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
+MANUAL_REFRESH_ATTEMPT_FILE = ".manual-refresh-attempt.json"
+MANUAL_REFRESH_LOCK_FILE = ".manual-refresh.lock"
+UPSTREAM_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; UnionPayRateMonitor/1.1; "
+        "+https://rate.sonab.uk)"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -20,26 +32,54 @@ def fetch_rate_for_day(day):
     url = BASE_URL.format(date_str)
 
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=15, headers=UPSTREAM_HEADERS)
     except requests.RequestException:
         raise
 
-    if response.status_code != 200:
+    if response.status_code == 404:
         return None
+
+    if response.status_code != 200:
+        response.raise_for_status()
+        raise requests.RequestException(
+            f"Unexpected UnionPay response: HTTP {response.status_code}"
+        )
 
     try:
         data = response.json()
-    except ValueError:
-        return None
+    except ValueError as error:
+        raise requests.RequestException("UnionPay returned invalid JSON") from error
 
-    for item in data.get("exchangeRateJson", []):
+    if not isinstance(data, dict):
+        raise requests.RequestException("UnionPay returned an invalid response shape")
+
+    exchange_rates = data.get("exchangeRateJson")
+    if not isinstance(exchange_rates, list):
+        raise requests.RequestException("UnionPay returned an invalid rate list")
+
+    for item in exchange_rates:
+        if not isinstance(item, dict):
+            raise requests.RequestException("UnionPay returned an invalid rate entry")
+
         if item.get("transCur") == "JPY" and item.get("baseCur") == "CNY":
-            return {
+            try:
+                rate = float(item["rateData"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise requests.RequestException(
+                    "UnionPay returned an invalid JPY/CNY rate"
+                ) from error
+
+            result = {
                 "source": "UnionPay International",
                 "curDate": data.get("curDate"),
-                "rate": float(item["rateData"]),
+                "rate": rate,
                 "source_url": url,
             }
+            if not _valid_rate(result):
+                raise requests.RequestException(
+                    "UnionPay returned invalid JPY/CNY rate data"
+                )
+            return result
 
     return None
 
@@ -98,6 +138,17 @@ def _atomic_write_json(path, payload):
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
+
+
+@contextmanager
+def _manual_refresh_lock(data_dir):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    with (data_dir / MANUAL_REFRESH_LOCK_FILE).open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _read_latest_cache(data_dir):
@@ -175,16 +226,44 @@ def _as_snapshot(rates, updated_at):
     return latest, previous, updated_at
 
 
-def get_latest_rate_snapshot(*, data_dir=None, now=None, fetcher=None):
-    data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+def _stored_snapshot(data_dir):
+    fetched_at, cached_rates = _read_latest_cache(data_dir)
+    fallback_rates = _merge_rates(cached_rates, _read_history(data_dir))
+    if not fallback_rates:
+        raise RuntimeError("No UnionPay rate found")
+    return _as_snapshot(fallback_rates, fetched_at)
+
+
+def _read_manual_refresh_attempt(data_dir):
+    payload = _read_json(data_dir / MANUAL_REFRESH_ATTEMPT_FILE)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        attempted_at = datetime.fromisoformat(payload["attempted_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if attempted_at.tzinfo is None:
+        attempted_at = attempted_at.replace(tzinfo=JST)
+    return attempted_at
+
+
+def _normalized_now(now):
     now = now or datetime.now(JST)
     if now.tzinfo is None:
         now = now.replace(tzinfo=JST)
+    return now
+
+
+def get_latest_rate_snapshot(
+    *, data_dir=None, now=None, fetcher=None, force_refresh=False
+):
+    data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+    now = _normalized_now(now)
 
     fetcher = fetcher or fetch_rate_for_day
     fetched_at, cached_rates = _read_latest_cache(data_dir)
 
-    if fetched_at is not None and cached_rates:
+    if not force_refresh and fetched_at is not None and cached_rates:
         cache_age = now - fetched_at.astimezone(now.tzinfo)
         if timedelta(0) <= cache_age <= CACHE_TTL:
             return _as_snapshot(cached_rates, fetched_at)
@@ -225,6 +304,54 @@ def get_latest_rate_snapshot(*, data_dir=None, now=None, fetcher=None):
         return _as_snapshot(fallback_rates, fetched_at)
 
     raise RuntimeError("No UnionPay rate found")
+
+
+def refresh_latest_rate_snapshot(*, data_dir=None, now=None, fetcher=None):
+    data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+    now = _normalized_now(now)
+
+    try:
+        with _manual_refresh_lock(data_dir):
+            fetched_before, cached_rates = _read_latest_cache(data_dir)
+
+            if fetched_before is not None and cached_rates:
+                cache_age = now - fetched_before.astimezone(now.tzinfo)
+                if timedelta(0) <= cache_age <= MANUAL_REFRESH_COOLDOWN:
+                    return (*_as_snapshot(cached_rates, fetched_before), "current")
+
+            attempted_at = _read_manual_refresh_attempt(data_dir)
+            if attempted_at is not None:
+                attempt_age = now - attempted_at.astimezone(now.tzinfo)
+                if timedelta(0) <= attempt_age <= MANUAL_REFRESH_COOLDOWN:
+                    return (*_stored_snapshot(data_dir), "throttled")
+
+            try:
+                _atomic_write_json(
+                    data_dir / MANUAL_REFRESH_ATTEMPT_FILE,
+                    {"attempted_at": now.isoformat()},
+                )
+            except OSError as error:
+                logger.warning(
+                    "Could not record manual refresh attempt in %s: %s",
+                    data_dir,
+                    error,
+                )
+                return (*_stored_snapshot(data_dir), "failed")
+
+            latest, previous, updated_at = get_latest_rate_snapshot(
+                data_dir=data_dir,
+                now=now,
+                fetcher=fetcher,
+                force_refresh=True,
+            )
+            refreshed = updated_at is not None and (
+                fetched_before is None or updated_at > fetched_before
+            )
+            status = "updated" if refreshed else "failed"
+            return latest, previous, updated_at, status
+    except OSError as error:
+        logger.warning("Could not lock manual refresh in %s: %s", data_dir, error)
+        return (*_stored_snapshot(data_dir), "failed")
 
 
 def get_latest_two_rates(*, data_dir=None, now=None, fetcher=None):

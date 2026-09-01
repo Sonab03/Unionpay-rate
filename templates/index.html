@@ -63,6 +63,27 @@
             line-height: 1.7;
         }
 
+        .refresh-form {
+            margin-top: 18px;
+        }
+
+        .refresh-button {
+            width: 100%;
+            background: #eee;
+            color: #333;
+        }
+
+        .refresh-message {
+            margin-top: 10px;
+            color: #287a3d;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .refresh-message.failed {
+            color: #a33a32;
+        }
+
         .tabs {
             display: flex;
             gap: 8px;
@@ -160,6 +181,21 @@
                 {{ "%.2f"|format(comparison.change_pct) }}%
                 )
             </div>
+        </div>
+        {% endif %}
+
+        <form class="refresh-form"
+              action="/refresh"
+              method="post">
+            <button class="refresh-button"
+                    type="submit">
+                手动刷新
+            </button>
+        </form>
+
+        {% if refresh_message %}
+        <div class="refresh-message{% if refresh_status == 'failed' %} failed{% endif %}">
+            {{ refresh_message }}
         </div>
         {% endif %}
     </div>
