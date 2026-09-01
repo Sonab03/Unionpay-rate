@@ -42,10 +42,20 @@
             font-size: 24px;
         }
 
-        .big {
-            font-size: 30px;
+        .rate-jpy {
+            color: #777;
+            font-size: 16px;
+            font-weight: 500;
+            line-height: 1.4;
+            text-align: left;
+        }
+
+        .rate-cny {
+            margin-top: 4px;
+            font-size: 32px;
             font-weight: 700;
             line-height: 1.25;
+            text-align: center;
         }
 
         .secondary {
@@ -153,8 +163,12 @@
     <div class="card">
         <h1>银联日元汇率</h1>
 
-        <div class="big">
-            10,000 JPY = {{ "%.2f"|format(latest_10000) }} CNY
+        <div class="rate-jpy">
+            10,000 JPY ≈
+        </div>
+
+        <div class="rate-cny">
+            {{ "%.2f"|format(latest_10000) }} CNY
         </div>
 
         <div class="secondary">

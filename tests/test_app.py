@@ -60,8 +60,34 @@ class HomePageTests(unittest.TestCase):
 
         html = response.body.decode("utf-8")
         self.assertIn(
-            "更新时间：2026-09-01 00:15 JST · v1.1.1",
+            "更新时间：2026-09-01 00:15 JST · v1.1.2",
             html,
+        )
+
+    def test_primary_rate_uses_subtle_jpy_line_and_centered_cny_line(self):
+        updated_at = datetime(2026, 9, 1, 0, 15, tzinfo=JST)
+
+        with patch.object(
+            app,
+            "get_latest_rate_snapshot",
+            return_value=(LATEST_RATE, PREVIOUS_RATE, updated_at),
+        ):
+            response = app.home(make_request())
+
+        html = response.body.decode("utf-8")
+        self.assertIn('class="rate-jpy"', html)
+        self.assertIn("10,000 JPY ≈", html)
+        self.assertIn('class="rate-cny"', html)
+        self.assertIn("422.55 CNY", html)
+        self.assertRegex(
+            html,
+            r"(?s)\.rate-jpy\s*\{[^}]*color: #777;[^}]*font-size: 16px;"
+            r"[^}]*text-align: left;",
+        )
+        self.assertRegex(
+            html,
+            r"(?s)\.rate-cny\s*\{[^}]*font-size: 32px;"
+            r"[^}]*text-align: center;",
         )
 
     def test_home_shows_manual_refresh_button_and_success_message(self):
