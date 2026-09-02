@@ -1,10 +1,20 @@
-from fastapi import FastAPI, Request
+from datetime import datetime
+
+import requests
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from unionpay import JST, get_latest_rate_snapshot, refresh_latest_rate_snapshot
+from unionpay import (
+    JST,
+    get_latest_rate_snapshot,
+    get_rate_for_date,
+    refresh_latest_rate_snapshot,
+)
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 APP_VERSION = "1.1.4"
 REFRESH_MESSAGES = {
@@ -67,3 +77,35 @@ def refresh_rates():
         status = "failed"
 
     return RedirectResponse(url=f"/?refresh={status}", status_code=303)
+
+
+@app.get("/expenses")
+def expenses(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="expenses.html",
+        context={"app_version": APP_VERSION},
+    )
+
+
+@app.get("/api/rate")
+def rate_for_date(date: str):
+    try:
+        requested_day = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="日期格式无效") from error
+
+    if requested_day > datetime.now(JST).date():
+        raise HTTPException(status_code=400, detail="不能查询未来日期")
+
+    try:
+        result = get_rate_for_date(requested_day)
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=502, detail="暂时无法取得银联汇率"
+        ) from error
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="14 天内没有可用汇率")
+
+    return result

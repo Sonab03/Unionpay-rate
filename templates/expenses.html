@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日元消费汇总</title>
+</head>
+<body>
+<main>
+    <a href="/">← 当前汇率</a>
+    <h1>日元消费汇总</h1>
+
+    <section id="summary" aria-label="消费汇总"></section>
+
+    <form id="expenseForm">
+        <label for="purchaseDate">消费日期</label>
+        <input id="purchaseDate" name="purchaseDate" type="date" required>
+
+        <label for="jpyAmount">日元金额</label>
+        <input id="jpyAmount" name="jpyAmount" type="number" min="0.01" step="any" required>
+
+        <label for="note">备注</label>
+        <input id="note" name="note" type="text" maxlength="200">
+
+        <button type="submit">保存记录</button>
+        <button id="cancelEdit" type="button" hidden>取消编辑</button>
+    </form>
+
+    <p id="formMessage" role="status"></p>
+    <section id="records" aria-label="消费明细"></section>
+
+    <section aria-label="JSON 存档">
+        <button id="downloadArchive" type="button">下载存档</button>
+        <input id="archiveFile" type="file" accept=".json,application/json">
+        <button id="loadArchive" type="button">加载存档</button>
+        <p id="archiveMessage" role="status"></p>
+    </section>
+
+    <footer>@Sonab · v{{ app_version }}</footer>
+</main>
+<script src="/static/expense_tracker_core.js"></script>
+<script src="/static/expenses.js"></script>
+</body>
+</html>

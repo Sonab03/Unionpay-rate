@@ -2,7 +2,8 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-from fastapi import Request
+import requests
+from fastapi import HTTPException, Request
 
 import app
 from unionpay import JST
@@ -42,6 +43,56 @@ def make_request(path="/", method="GET", query_string=b""):
 
 
 class HomePageTests(unittest.TestCase):
+    def test_expenses_page_renders_tracker_shell(self):
+        response = app.expenses(make_request(path="/expenses"))
+
+        html = response.body.decode("utf-8")
+        self.assertIn("日元消费汇总", html)
+        self.assertIn('id="expenseForm"', html)
+        self.assertIn('src="/static/expense_tracker_core.js"', html)
+        self.assertIn('src="/static/expenses.js"', html)
+
+    def test_rate_api_returns_requested_and_actual_dates(self):
+        historical_rate = {
+            "requestedDate": "2026-08-30",
+            "rateDate": "2026-08-28",
+            "rate": 0.042334,
+            "source": "UnionPay International",
+        }
+
+        with patch.object(
+            app, "get_rate_for_date", return_value=historical_rate, create=True
+        ):
+            result = app.rate_for_date("2026-08-30")
+
+        self.assertEqual(historical_rate, result)
+
+    def test_rate_api_rejects_invalid_and_future_dates(self):
+        for raw_date in ("2026-02-30", "30-08-2026", "2999-01-01"):
+            with self.subTest(raw_date=raw_date):
+                with self.assertRaises(HTTPException) as captured:
+                    app.rate_for_date(raw_date)
+                self.assertEqual(400, captured.exception.status_code)
+
+    def test_rate_api_returns_404_when_lookback_has_no_rate(self):
+        with patch.object(app, "get_rate_for_date", return_value=None, create=True):
+            with self.assertRaises(HTTPException) as captured:
+                app.rate_for_date("2026-08-30")
+
+        self.assertEqual(404, captured.exception.status_code)
+
+    def test_rate_api_returns_502_on_upstream_error(self):
+        with patch.object(
+            app,
+            "get_rate_for_date",
+            side_effect=requests.RequestException("unavailable"),
+            create=True,
+        ):
+            with self.assertRaises(HTTPException) as captured:
+                app.rate_for_date("2026-08-30")
+
+        self.assertEqual(502, captured.exception.status_code)
+
     def test_home_includes_system_aware_theme_control(self):
         updated_at = datetime(2026, 9, 1, 0, 15, tzinfo=JST)
 
