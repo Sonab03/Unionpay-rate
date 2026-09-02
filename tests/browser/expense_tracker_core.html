@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Expense Tracker Core Tests</title>
+</head>
+<body>
+<h1>Expense Tracker Core Tests</h1>
+<pre id="result" data-failures="pending">等待测试</pre>
+<script src="../../static/expense_tracker_core.js"></script>
+<script>
+    (() => {
+        "use strict";
+        const failures = [];
+        const lines = [];
+
+        function test(name, run) {
+            try {
+                run();
+                lines.push("PASS " + name);
+            } catch (error) {
+                failures.push(name + ": " + error.message);
+                lines.push("FAIL " + name + ": " + error.message);
+            }
+        }
+
+        function equal(actual, expected) {
+            if (actual !== expected) {
+                throw new Error(`expected ${expected}, got ${actual}`);
+            }
+        }
+
+        function throws(run) {
+            let didThrow = false;
+            try {
+                run();
+            } catch (_error) {
+                didThrow = true;
+            }
+            if (!didThrow) {
+                throw new Error("expected function to throw");
+            }
+        }
+
+        const baseRecord = {
+            id: "a",
+            purchaseDate: "2026-08-28",
+            jpyAmount: 10000,
+            note: "",
+            rateDate: "2026-08-28",
+            rate: 0.04,
+            createdAt: "2026-09-01T00:00:00.000Z",
+            updatedAt: "2026-09-01T00:00:00.000Z"
+        };
+
+        test("weighted average uses spending amounts", () => {
+            const records = [
+                baseRecord,
+                {
+                    ...baseRecord,
+                    id: "b",
+                    purchaseDate: "2026-08-29",
+                    jpyAmount: 30000,
+                    note: "交通",
+                    rateDate: "2026-08-29",
+                    rate: 0.05
+                }
+            ];
+            const summary = ExpenseTrackerCore.calculateSummary(records);
+            equal(summary.totalJPY, 40000);
+            equal(summary.totalCNY, 1900);
+            equal(summary.weightedAverageRate, 0.0475);
+            equal(summary.averagePer10000JPY, 475);
+        });
+
+        test("empty records have no average", () => {
+            const summary = ExpenseTrackerCore.calculateSummary([]);
+            equal(summary.totalJPY, 0);
+            equal(summary.totalCNY, 0);
+            equal(summary.weightedAverageRate, null);
+            equal(summary.averagePer10000JPY, null);
+        });
+
+        test("record validation rejects invalid fields", () => {
+            equal(ExpenseTrackerCore.validateRecord(baseRecord).id, "a");
+            throws(() => ExpenseTrackerCore.validateRecord({
+                ...baseRecord, jpyAmount: 0
+            }));
+            throws(() => ExpenseTrackerCore.validateRecord({
+                ...baseRecord, note: "x".repeat(201)
+            }));
+            throws(() => ExpenseTrackerCore.validateRecord({
+                ...baseRecord, rateDate: "2026-08-29"
+            }));
+        });
+
+        test("archive round trip preserves valid records", () => {
+            const archive = ExpenseTrackerCore.createArchive(
+                [baseRecord], "2026-09-02T00:00:00.000Z"
+            );
+            equal(archive.schemaVersion, 1);
+            equal(archive.exportedAt, "2026-09-02T00:00:00.000Z");
+            const parsed = ExpenseTrackerCore.parseArchive(JSON.stringify(archive));
+            equal(parsed.length, 1);
+            equal(parsed[0].id, "a");
+        });
+
+        test("archive parsing is all-or-nothing", () => {
+            throws(() => ExpenseTrackerCore.parseArchive("not json"));
+            throws(() => ExpenseTrackerCore.parseArchive(JSON.stringify({
+                schemaVersion: 2, exportedAt: "2026-09-02T00:00:00.000Z", records: []
+            })));
+            throws(() => ExpenseTrackerCore.parseArchive(JSON.stringify({
+                schemaVersion: 1,
+                exportedAt: "2026-09-02T00:00:00.000Z",
+                records: [baseRecord, { ...baseRecord, id: "bad", rate: 0 }]
+            })));
+            throws(() => ExpenseTrackerCore.parseArchive(JSON.stringify({
+                schemaVersion: 1,
+                exportedAt: "2026-09-02T00:00:00.000Z",
+                records: Array.from({ length: 10001 }, (_value, index) => ({
+                    ...baseRecord, id: "record-" + index
+                }))
+            })));
+        });
+
+        test("merge deduplicates and keeps the newest update", () => {
+            const newer = {
+                ...baseRecord,
+                note: "newer",
+                updatedAt: "2026-09-02T00:00:00.000Z"
+            };
+            const added = { ...baseRecord, id: "b" };
+            const merged = ExpenseTrackerCore.mergeRecords(
+                [baseRecord], [newer, added]
+            );
+            equal(merged.records.length, 2);
+            equal(merged.records.find(record => record.id === "a").note, "newer");
+            equal(merged.added, 1);
+            equal(merged.updated, 1);
+            equal(merged.ignored, 0);
+
+            const repeated = ExpenseTrackerCore.mergeRecords(
+                merged.records, [newer, added]
+            );
+            equal(repeated.records.length, 2);
+            equal(repeated.added, 0);
+            equal(repeated.updated, 0);
+            equal(repeated.ignored, 2);
+        });
+
+        const result = document.getElementById("result");
+        result.dataset.failures = String(failures.length);
+        result.textContent = lines.join("\n");
+        document.title = failures.length === 0
+            ? "PASS Expense Tracker Core Tests"
+            : "FAIL Expense Tracker Core Tests";
+    })();
+</script>
+</body>
+</html>
