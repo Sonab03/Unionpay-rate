@@ -8,9 +8,78 @@
 
     <title>Sonab's 银联日元汇率</title>
 
+    <script>
+        (() => {
+            const savedTheme = localStorage.getItem("theme");
+            if (savedTheme === "light" || savedTheme === "dark") {
+                document.documentElement.setAttribute("data-theme", savedTheme);
+            }
+        })();
+    </script>
+
     <style>
         * {
             box-sizing: border-box;
+        }
+
+        :root {
+            color-scheme: light;
+            --page-bg: #f5f5f7;
+            --text: #111;
+            --card-bg: #fff;
+            --muted: #666;
+            --subtle: #777;
+            --faint: #999;
+            --border: #eee;
+            --control-bg: #eee;
+            --control-text: #333;
+            --active-bg: #111;
+            --active-text: #fff;
+            --input-border: #ccc;
+            --success: #287a3d;
+            --failure: #a33a32;
+        }
+
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --page-bg: #111214;
+            --text: #f3f3f4;
+            --card-bg: #1c1d20;
+            --muted: #b0b0b5;
+            --subtle: #9b9da3;
+            --faint: #85878e;
+            --border: #34363a;
+            --control-bg: #2b2d31;
+            --control-text: #ededee;
+            --active-bg: #f1f1f2;
+            --active-text: #111214;
+            --input-border: #494b50;
+            --success: #6fc587;
+            --failure: #ef8981;
+        }
+
+        :root[data-theme="light"] {
+            color-scheme: light;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme]) {
+                color-scheme: dark;
+                --page-bg: #111214;
+                --text: #f3f3f4;
+                --card-bg: #1c1d20;
+                --muted: #b0b0b5;
+                --subtle: #9b9da3;
+                --faint: #85878e;
+                --border: #34363a;
+                --control-bg: #2b2d31;
+                --control-text: #ededee;
+                --active-bg: #f1f1f2;
+                --active-text: #111214;
+                --input-border: #494b50;
+                --success: #6fc587;
+                --failure: #ef8981;
+            }
         }
 
         body {
@@ -21,8 +90,8 @@
                 BlinkMacSystemFont,
                 "Segoe UI",
                 sans-serif;
-            background: #f5f5f7;
-            color: #111;
+            background: var(--page-bg);
+            color: var(--text);
         }
 
         .container {
@@ -31,7 +100,7 @@
         }
 
         .card {
-            background: white;
+            background: var(--card-bg);
             border-radius: 22px;
             padding: 24px;
             margin-bottom: 16px;
@@ -39,11 +108,27 @@
 
         h1 {
             margin: 0 0 20px;
+            padding-right: 92px;
             font-size: 24px;
         }
 
+        .rate-card {
+            position: relative;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            width: auto;
+            min-width: 80px;
+            padding: 8px 10px;
+            flex: none;
+            font-size: 13px;
+        }
+
         .rate-jpy {
-            color: #777;
+            color: var(--subtle);
             font-size: 16px;
             font-weight: 500;
             line-height: 1.4;
@@ -60,15 +145,15 @@
 
         .secondary {
             margin-top: 8px;
-            color: #666;
+            color: var(--muted);
             font-size: 14px;
         }
 
         .comparison {
             margin-top: 20px;
             padding-top: 16px;
-            border-top: 1px solid #eee;
-            color: #555;
+            border-top: 1px solid var(--border);
+            color: var(--muted);
             font-size: 14px;
             line-height: 1.7;
         }
@@ -79,19 +164,19 @@
 
         .refresh-button {
             width: 100%;
-            background: #eee;
-            color: #333;
+            background: var(--control-bg);
+            color: var(--control-text);
         }
 
         .refresh-message {
             margin-top: 10px;
-            color: #287a3d;
+            color: var(--success);
             font-size: 13px;
             text-align: center;
         }
 
         .refresh-message.failed {
-            color: #a33a32;
+            color: var(--failure);
         }
 
         .tabs {
@@ -110,29 +195,31 @@
         }
 
         button.active {
-            background: #111;
-            color: white;
+            background: var(--active-bg);
+            color: var(--active-text);
         }
 
         button:not(.active) {
-            background: #eee;
-            color: #333;
+            background: var(--control-bg);
+            color: var(--control-text);
         }
 
         label {
             display: block;
             margin-bottom: 8px;
-            color: #555;
+            color: var(--muted);
             font-size: 14px;
         }
 
         input {
             width: 100%;
             padding: 14px 16px;
-            border: 1px solid #ccc;
+            border: 1px solid var(--input-border);
             border-radius: 12px;
             font-size: 20px;
             outline: none;
+            background: var(--card-bg);
+            color: var(--text);
         }
 
         .result {
@@ -143,13 +230,13 @@
 
         .hint {
             margin-top: 8px;
-            color: #777;
+            color: var(--subtle);
             font-size: 13px;
         }
 
         .source {
             text-align: center;
-            color: #999;
+            color: var(--faint);
             font-size: 12px;
             line-height: 1.6;
         }
@@ -160,7 +247,14 @@
 
 <div class="container">
 
-    <div class="card">
+    <div class="card rate-card">
+        <button id="themeToggle"
+                class="theme-toggle"
+                type="button"
+                aria-label="切换颜色主题">
+            ◐ 自动
+        </button>
+
         <h1>银联日元汇率</h1>
 
         <div class="rate-jpy">
@@ -186,9 +280,9 @@
             </div>
 
             <div>
-                10,000 JPY = 
+                10,000 JPY =
                 {% if comparison.change >= 0 %}+{% endif %}
-                {{ "%.3f"|format(comparison.rate) }} CNY 
+                {{ "%.3f"|format(comparison.rate) }} CNY
                 <br>
                 相较最新数据：
                 {% if comparison.change >= 0 %}+{% endif %}
@@ -272,6 +366,37 @@
     const inputLabel = document.getElementById("inputLabel");
     const jpyButton = document.getElementById("jpyButton");
     const cnyButton = document.getElementById("cnyButton");
+    const themeToggle = document.getElementById("themeToggle");
+    const root = document.documentElement;
+    const themeModes = ["auto", "light", "dark"];
+    const themeLabels = {
+        auto: "◐ 自动",
+        light: "☀ 浅色",
+        dark: "☾ 深色"
+    };
+
+    function applyTheme(theme) {
+        if (theme === "auto") {
+            root.removeAttribute("data-theme");
+        } else {
+            root.setAttribute("data-theme", theme);
+        }
+        themeToggle.textContent = themeLabels[theme];
+    }
+
+    let selectedTheme = localStorage.getItem("theme");
+    if (!themeModes.includes(selectedTheme)) {
+        selectedTheme = "auto";
+    }
+    applyTheme(selectedTheme);
+
+    themeToggle.addEventListener("click", () => {
+        const currentIndex = themeModes.indexOf(selectedTheme);
+        const nextTheme = themeModes[(currentIndex + 1) % themeModes.length];
+        selectedTheme = nextTheme;
+        localStorage.setItem("theme", nextTheme);
+        applyTheme(nextTheme);
+    });
 
     function render() {
         const value = Number(amount.value);

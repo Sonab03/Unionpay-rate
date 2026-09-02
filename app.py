@@ -6,7 +6,7 @@ from unionpay import JST, get_latest_rate_snapshot, refresh_latest_rate_snapshot
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 REFRESH_MESSAGES = {
     "updated": "汇率已更新",
     "current": "刚刚已经刷新，无需重复操作",
