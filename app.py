@@ -16,7 +16,7 @@ from unionpay import (
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.2.0"
 REFRESH_MESSAGES = {
     "updated": "汇率已更新",
     "current": "刚刚已经刷新，无需重复操作",

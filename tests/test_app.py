@@ -43,6 +43,18 @@ def make_request(path="/", method="GET", query_string=b""):
 
 
 class HomePageTests(unittest.TestCase):
+    def test_home_links_to_expense_tracker(self):
+        with patch.object(
+            app,
+            "get_latest_rate_snapshot",
+            return_value=(LATEST_RATE, PREVIOUS_RATE, datetime.now(JST)),
+        ):
+            response = app.home(make_request())
+
+        html = response.body.decode("utf-8")
+        self.assertIn('href="/expenses"', html)
+        self.assertIn("日元消费汇总", html)
+
     def test_expenses_page_renders_tracker_shell(self):
         response = app.expenses(make_request(path="/expenses"))
 
@@ -51,6 +63,11 @@ class HomePageTests(unittest.TestCase):
         self.assertIn('id="expenseForm"', html)
         self.assertIn('src="/static/expense_tracker_core.js"', html)
         self.assertIn('src="/static/expenses.js"', html)
+        self.assertIn('id="summaryTotalJPY"', html)
+        self.assertIn('id="summaryAverageRate"', html)
+        self.assertIn('id="recordList"', html)
+        self.assertIn('id="downloadArchive"', html)
+        self.assertIn('id="archiveFile"', html)
 
     def test_rate_api_returns_requested_and_actual_dates(self):
         historical_rate = {
@@ -135,7 +152,7 @@ class HomePageTests(unittest.TestCase):
             html,
         )
         self.assertIn(
-            "@Sonab · v1.1.4",
+            "@Sonab · v1.2.0",
             html,
         )
 

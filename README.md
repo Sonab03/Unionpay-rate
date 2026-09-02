@@ -1,2 +1,7 @@
 # Unionpay-rate
-A web application that can check UnionPay rate.
+
+银联日元兑人民币汇率查询工具，包含当前汇率换算、历史汇率缓存和浏览器本地消费汇总。
+
+- `/`：当前银联汇率、手动刷新和金额换算
+- `/expenses`：按消费日期记录日元支出，计算加权平均汇率
+- 消费记录仅保存在浏览器，可下载或加载 JSON 存档

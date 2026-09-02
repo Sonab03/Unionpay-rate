@@ -240,6 +240,26 @@
             font-size: 12px;
             line-height: 1.6;
         }
+
+        .expense-link {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .expense-link-title {
+            font-size: 16px;
+            font-weight: 650;
+        }
+
+        .expense-link-hint {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 13px;
+        }
     </style>
 </head>
 
@@ -346,6 +366,14 @@
              class="hint"></div>
 
     </div>
+
+    <a class="card expense-link" href="/expenses">
+        <div>
+            <div class="expense-link-title">日元消费汇总</div>
+            <div class="expense-link-hint">按消费日期计算实际平均汇率</div>
+        </div>
+        <span aria-hidden="true">→</span>
+    </a>
 
     <div class="source">
         Source: UnionPay International<br>

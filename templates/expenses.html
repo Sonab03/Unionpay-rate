@@ -4,39 +4,135 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>日元消费汇总</title>
+    <script>
+        (() => {
+            const saved = localStorage.getItem("theme");
+            if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+        })();
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        :root {
+            color-scheme: light; --page-bg:#f5f5f7; --text:#111; --card-bg:#fff;
+            --muted:#666; --subtle:#777; --faint:#999; --border:#e7e7ea;
+            --control-bg:#eee; --control-text:#333; --active-bg:#111; --active-text:#fff;
+            --input-border:#ccc; --success:#287a3d; --failure:#a33a32; --danger-bg:#fff0ef;
+        }
+        :root[data-theme="dark"] {
+            color-scheme:dark; --page-bg:#111214; --text:#f3f3f4; --card-bg:#1c1d20;
+            --muted:#b0b0b5; --subtle:#9b9da3; --faint:#85878e; --border:#34363a;
+            --control-bg:#2b2d31; --control-text:#ededee; --active-bg:#f1f1f2;
+            --active-text:#111214; --input-border:#494b50; --success:#6fc587;
+            --failure:#ef8981; --danger-bg:#352120;
+        }
+        @media (prefers-color-scheme:dark) {
+            :root:not([data-theme]) {
+                color-scheme:dark; --page-bg:#111214; --text:#f3f3f4; --card-bg:#1c1d20;
+                --muted:#b0b0b5; --subtle:#9b9da3; --faint:#85878e; --border:#34363a;
+                --control-bg:#2b2d31; --control-text:#ededee; --active-bg:#f1f1f2;
+                --active-text:#111214; --input-border:#494b50; --success:#6fc587;
+                --failure:#ef8981; --danger-bg:#352120;
+            }
+        }
+        body { margin:0; padding:24px 16px; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--page-bg); color:var(--text); }
+        .container { max-width:720px; margin:0 auto; }
+        .topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+        .back { color:var(--muted); text-decoration:none; font-size:14px; }
+        .theme-toggle { border:0; border-radius:12px; padding:8px 11px; background:var(--control-bg); color:var(--control-text); font-size:13px; cursor:pointer; }
+        .card { background:var(--card-bg); border-radius:22px; padding:24px; margin-bottom:16px; }
+        h1 { margin:0 0 6px; font-size:25px; }
+        h2 { margin:0 0 18px; font-size:18px; }
+        .intro { margin:0 0 20px; color:var(--muted); font-size:14px; line-height:1.6; }
+        .summary-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+        .summary-item { min-width:0; padding:14px; border-radius:15px; background:var(--page-bg); }
+        .summary-label { color:var(--muted); font-size:12px; }
+        .summary-value { margin-top:5px; font-size:20px; font-weight:700; overflow-wrap:anywhere; }
+        .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+        .field-note { grid-column:1/-1; }
+        label { display:block; margin-bottom:7px; color:var(--muted); font-size:14px; }
+        input { width:100%; padding:13px 14px; border:1px solid var(--input-border); border-radius:12px; background:var(--card-bg); color:var(--text); font-size:16px; outline:none; }
+        input:focus { border-color:var(--text); }
+        .actions { display:flex; gap:10px; margin-top:18px; }
+        button { border:0; border-radius:12px; padding:12px 15px; background:var(--control-bg); color:var(--control-text); font-size:15px; cursor:pointer; }
+        button.primary { flex:1; background:var(--active-bg); color:var(--active-text); }
+        button:disabled { opacity:.55; cursor:wait; }
+        .message { min-height:1.3em; margin:10px 0 0; color:var(--success); font-size:13px; }
+        .message.error { color:var(--failure); }
+        .record-list { display:grid; gap:10px; }
+        .record { border:1px solid var(--border); border-radius:15px; padding:14px; }
+        .record-main { display:flex; justify-content:space-between; gap:12px; }
+        .record-amount { text-align:right; white-space:nowrap; }
+        .record-jpy { font-weight:700; }
+        .record-cny { margin-top:3px; color:var(--muted); font-size:14px; }
+        .record-meta { margin-top:8px; color:var(--subtle); font-size:12px; line-height:1.6; }
+        .record-note { margin-top:6px; font-size:14px; overflow-wrap:anywhere; }
+        .record-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+        .record-actions button { padding:7px 12px; font-size:13px; }
+        .record-actions .danger { color:var(--failure); background:var(--danger-bg); }
+        .empty { margin:0; padding:18px 0 4px; text-align:center; color:var(--muted); font-size:14px; }
+        .archive-actions { display:flex; flex-wrap:wrap; gap:10px; }
+        .file-wrap { flex:1 1 240px; }
+        .file-wrap input { padding:9px; font-size:13px; }
+        .privacy { margin:12px 0 0; color:var(--faint); font-size:12px; line-height:1.6; }
+        .source { text-align:center; color:var(--faint); font-size:12px; line-height:1.7; }
+        [hidden] { display:none !important; }
+        @media (max-width:520px) {
+            body { padding:16px 12px; }
+            .card { padding:19px; border-radius:19px; }
+            .summary-grid,.field-grid { grid-template-columns:1fr; }
+            .field-note { grid-column:auto; }
+            .summary-value { font-size:18px; }
+            .record-main { align-items:flex-start; }
+        }
+    </style>
 </head>
 <body>
-<main>
-    <a href="/">← 当前汇率</a>
-    <h1>日元消费汇总</h1>
-
-    <section id="summary" aria-label="消费汇总"></section>
-
-    <form id="expenseForm">
-        <label for="purchaseDate">消费日期</label>
-        <input id="purchaseDate" name="purchaseDate" type="date" required>
-
-        <label for="jpyAmount">日元金额</label>
-        <input id="jpyAmount" name="jpyAmount" type="number" min="0.01" step="any" required>
-
-        <label for="note">备注</label>
-        <input id="note" name="note" type="text" maxlength="200">
-
-        <button type="submit">保存记录</button>
-        <button id="cancelEdit" type="button" hidden>取消编辑</button>
-    </form>
-
-    <p id="formMessage" role="status"></p>
-    <section id="records" aria-label="消费明细"></section>
-
-    <section aria-label="JSON 存档">
-        <button id="downloadArchive" type="button">下载存档</button>
-        <input id="archiveFile" type="file" accept=".json,application/json">
-        <button id="loadArchive" type="button">加载存档</button>
-        <p id="archiveMessage" role="status"></p>
+<main class="container">
+    <div class="topbar">
+        <a class="back" href="/">← 当前汇率</a>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="切换颜色主题">◐ 自动</button>
+    </div>
+    <section class="card">
+        <h1>日元消费汇总</h1>
+        <p class="intro">按消费当天的银联汇率折算，看看目前为止实际花费的平均汇率。</p>
+        <div class="summary-grid" id="summary" aria-label="消费汇总">
+            <div class="summary-item"><div class="summary-label">累计日元</div><div id="summaryTotalJPY" class="summary-value">0 JPY</div></div>
+            <div class="summary-item"><div class="summary-label">累计人民币</div><div id="summaryTotalCNY" class="summary-value">0.00 CNY</div></div>
+            <div class="summary-item"><div class="summary-label">加权平均汇率</div><div id="summaryAverageRate" class="summary-value">—</div></div>
+            <div class="summary-item"><div class="summary-label">平均每 10,000 JPY</div><div id="summaryPer10000" class="summary-value">—</div></div>
+        </div>
     </section>
-
-    <footer>@Sonab · v{{ app_version }}</footer>
+    <section class="card">
+        <h2 id="formTitle">添加消费</h2>
+        <form id="expenseForm">
+            <div class="field-grid">
+                <div><label for="purchaseDate">消费日期</label><input id="purchaseDate" name="purchaseDate" type="date" required></div>
+                <div><label for="jpyAmount">日元金额</label><input id="jpyAmount" name="jpyAmount" type="number" min="0.01" step="any" inputmode="decimal" placeholder="例如 12000" required></div>
+                <div class="field-note"><label for="note">备注（可选）</label><input id="note" name="note" type="text" maxlength="200" placeholder="例如 交通、餐饮"></div>
+            </div>
+            <div class="actions">
+                <button id="saveButton" class="primary" type="submit">查询汇率并保存</button>
+                <button id="cancelEdit" type="button" hidden>取消编辑</button>
+            </div>
+        </form>
+        <p id="formMessage" class="message" role="status" aria-live="polite"></p>
+    </section>
+    <section class="card" aria-label="消费明细">
+        <h2>消费明细</h2>
+        <div id="recordList" class="record-list"></div>
+        <p id="emptyState" class="empty">还没有记录，先添加第一笔消费吧。</p>
+    </section>
+    <section class="card" aria-label="JSON 存档">
+        <h2>存档</h2>
+        <div class="archive-actions">
+            <button id="downloadArchive" type="button">下载 JSON 存档</button>
+            <div class="file-wrap"><input id="archiveFile" type="file" accept=".json,application/json" aria-label="选择 JSON 存档"></div>
+            <button id="loadArchive" type="button">加载并合并</button>
+        </div>
+        <p id="archiveMessage" class="message" role="status" aria-live="polite"></p>
+        <p class="privacy">记录只保存在这个浏览器里，不会上传到服务器。建议不定期下载存档备份。</p>
+    </section>
+    <footer class="source">Source: UnionPay International<br>@Sonab · v{{ app_version }}</footer>
 </main>
 <script src="/static/expense_tracker_core.js"></script>
 <script src="/static/expenses.js"></script>
