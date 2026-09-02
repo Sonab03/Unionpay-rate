@@ -17,6 +17,9 @@ MANUAL_REFRESH_COOLDOWN = timedelta(minutes=1)
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
 MANUAL_REFRESH_ATTEMPT_FILE = ".manual-refresh-attempt.json"
 MANUAL_REFRESH_LOCK_FILE = ".manual-refresh.lock"
+HISTORICAL_LOOKUP_LOCK_FILE = ".historical-rate.lock"
+DATE_LOOKUP_DIR = "date-lookups"
+HISTORICAL_LOOKBACK_DAYS = 14
 UPSTREAM_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (compatible; UnionPayRateMonitor/1.1; "
@@ -112,6 +115,92 @@ def _read_json(path):
         with path.open(encoding="utf-8") as source_file:
             return json.load(source_file)
     except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
+@contextmanager
+def _historical_rate_lock(data_dir):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    with (data_dir / HISTORICAL_LOOKUP_LOCK_FILE).open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _read_history_rate(data_dir, day):
+    rate = _read_json(data_dir / "history" / f"{day.isoformat()}.json")
+    return dict(rate) if _valid_rate(rate) else None
+
+
+def _historical_response(requested_day, rate):
+    return {
+        "requestedDate": requested_day.isoformat(),
+        "rateDate": _rate_date(rate),
+        "rate": float(rate["rate"]),
+        "source": rate.get("source", "UnionPay International"),
+    }
+
+
+def _read_date_lookup(data_dir, requested_day):
+    result = _read_json(
+        data_dir / DATE_LOOKUP_DIR / f"{requested_day.isoformat()}.json"
+    )
+    if not isinstance(result, dict):
+        return None
+    if result.get("requestedDate") != requested_day.isoformat():
+        return None
+    try:
+        rate_day = datetime.strptime(result["rateDate"], "%Y-%m-%d").date()
+        rate = float(result["rate"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if rate <= 0 or rate_day > requested_day:
+        return None
+    if (requested_day - rate_day).days >= HISTORICAL_LOOKBACK_DAYS:
+        return None
+    return {
+        "requestedDate": requested_day.isoformat(),
+        "rateDate": rate_day.isoformat(),
+        "rate": rate,
+        "source": str(result.get("source", "UnionPay International")),
+    }
+
+
+def _persist_history_rate(data_dir, rate):
+    _atomic_write_json(data_dir / "history" / f"{_rate_date(rate)}.json", rate)
+
+
+def _persist_date_lookup(data_dir, requested_day, result):
+    _atomic_write_json(
+        data_dir / DATE_LOOKUP_DIR / f"{requested_day.isoformat()}.json",
+        result,
+    )
+
+
+def get_rate_for_date(requested_day, *, data_dir=None, fetcher=None):
+    data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+    fetcher = fetcher or fetch_rate_for_day
+
+    with _historical_rate_lock(data_dir):
+        mapped = _read_date_lookup(data_dir, requested_day)
+        if mapped is not None:
+            return mapped
+
+        for offset in range(HISTORICAL_LOOKBACK_DAYS):
+            candidate_day = requested_day - timedelta(days=offset)
+            rate = _read_history_rate(data_dir, candidate_day)
+            if rate is None:
+                rate = fetcher(candidate_day)
+                if _valid_rate(rate):
+                    _persist_history_rate(data_dir, rate)
+
+            if _valid_rate(rate):
+                result = _historical_response(requested_day, rate)
+                _persist_date_lookup(data_dir, requested_day, result)
+                return result
+
         return None
 
 
